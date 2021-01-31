@@ -1,0 +1,156 @@
+#===============================================================================#
+# 12 Février 2021                                                               #
+# UFO Sightings around the world -- 2019-06-25                                  #
+# Axel Marivain                                                                 #
+# Projet Data Visualisation / 2A ENSAI                                          #
+# Tuteur : Arthur Katossky                                                      #
+#===============================================================================#
+
+
+
+########## Graph critic and remake with ggplot2 ##########
+
+rm(list = ls())
+
+  # ATTENTION : 
+  # Les Parties 1 et 2 font partie du devoir
+  # La Partie 3 est une partie "test" qui correspondait à ma première idée (ne pas en tenir compte). Je l'ai laissé pour garder une trace de mes recherches
+
+
+
+##### Importation des packages #####
+
+library(lubridate) # package pour gérer les formats "dates et heures"
+library(ggplot2) # package pour générer des graphiques
+library(dplyr) # package pour utiliser "pipe" (%>%)
+library(tidyverse) # package pour la gestion de la base de données (tidy data)
+library(readr)
+library(maps)
+library(gganimate)
+library(gifski)
+library(maptools)
+library(stringr)
+library(forecast)
+library(grid)
+library(viridis)
+
+
+
+##### Importation des données #####
+
+ufo_sightings <- read_csv("https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2019/2019-06-25/ufo_sightings.csv")
+  # données provenant du github : rfordatascience/tidytuesday
+  # plusieurs warning concernant la specification des colonnes "character" et "double"
+
+summary(ufo_sightings)
+
+
+
+##### Partie 1 - Tidy Data #####
+
+
+  # transformation des variables
+ufo_sightings <- ufo_sightings %>% 
+  mutate(
+    date_time = date_time %>% as_datetime(format = "%m/%d/%Y %H:%M"), # transformation de la variable "date" en format "date et heure"
+    month = date_time %>% month(label = TRUE) %>% as.factor(), # création d'une variable "mois"
+    year = date_time %>% year() %>% as.factor(), # création d'une variable "année"
+    day = date_time %>% day() %>% as.factor(), # création d'une variable "jour"
+    week = date_time %>% week() %>% as.factor(), # création d'une variable "semaine"
+    week_day = date_time %>% wday(week_start = 1, label = TRUE), # création d'une variable "jour de la semaine"
+    date_documented = date_documented %>% as.Date(format = "%m/%d/%Y"), # transformation de la variable "date documentée" en format date
+    city_area = city_area %>% as.factor(), # transformation de la variable "ville" en facteur
+    #state = state %>% as.factor(), # transformation de la variable "état" en facteur
+    country = country %>% as.factor(), # transformation de la variable "pays" en facteur
+    ufo_shape = ufo_shape %>% as.factor(), # transformation de la variable "forme de l'OVNI" en facteur
+  )
+levels(ufo_sightings$month) <- c("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec") # transformation des mois en Anglais (pour garder une cohérence sur le graphique). Méthode "à la main" car Sys.setlocale() ne fonctionne pas sur mon mac
+summary(ufo_sightings)
+  
+  
+  # sélection des observations pour la Partie 2 (graphique)
+ufo_us <- ufo_sightings %>% 
+  filter(country == 'us', !(year %in% c("2014"))) # on ne garde que le pays "Etats-Unis" et on supprime l'année 2014 qui n'est pas finie et qui altère le graphique. Les données s'arrêtent au 8 mai 2014 : le mois de mai semble atypique sur le graphique d'origine alors qu'il manque simplement les données pour le moi entier. Nous aurions également pu supprimer seulement le moi de mai 2014, mais par soucis de visualisation et de tendance à la hausse qui perturberait l'analyse je préfère supprimer directement l'année entière 
+
+
+  # sélection des observations utiles à la représentation géographique animée (TEST)
+ufo_us_geo <- ufo_sightings %>% 
+  filter(country == 'us', !(state %in% c('pr','ak','hi')), !(year %in% c("2014"))) # on ne garde que le pays "Etats-Unis" et on supprime les états "Puerto Rico", "Alaska" et "Hawaï" pour effectuer une représentation géographique. On supprime également l'année 2014 comme dans le cas précédent.
+
+
+  # tidy data
+ufo_tidy <- ufo_us %>%
+  mutate(year = as.integer(as.character(year))) %>% # on transforme la variable "année" pour pouvoir ensuite filter
+  filter(year >= 1990) %>% # on ne prend que les années supérieures à 1990 car avant 1990, l'évolution du nombre d'observation est minime comparativement à l'évolution à partir de 1995, ce qui ecraserait l'évolution entre 1910 et 1990. Ce serait de l'information en trop (et qui prendrait les 3/4 du grapgique inutilement) car on comprend instinctivement qu'avant les années 1990, il n'y avait pas beaucoup d'observations.  
+  group_by(year, month) %>% # on regroupe par année et mois pour avoir en ligne les "canaux" x et y
+  summarise(count=n()) # ces transformations permettent également de créer une variable de comptage : le comptage revient à ma première idée de traiter les données car je pense que la méthode de comptage avec ces types de données permet des représentations intuitives
+
+
+  # tidy data pour la partie 3 (TEST)
+ufo_tidy_test <- ufo_us_geo %>% 
+  group_by(month, longitude, latitude) %>%  # ici je voulais compter le nombre d'observation d'ovni dans une ville (même longitude et latitude) pour chaque mois
+  summarise(count=n()) # variable de comptage des observations d'ovni
+
+
+
+##### Partie 3 - Représentation graphique #####
+
+
+  # l'objectif est de reprendre la forme du graphique de Brian P. Dranka critiquée initialement en utilisant mes choix de données et de représentation 
+  # lors de mon travail j'ai pu également découvrir que Brian P. Dranka s'est lui même inspiré, pour la forme de ses graphiques, à James Curley : https://gist.github.com/jalapic/9a1c069aa8cee4089c1e (utilisation du package viridis pour ce type de graphique)
+ufo_plot <- ggplot(data = ufo_tidy, 
+                   mapping = aes(x = year, y = reorder(month, desc(month)), 
+                   fill = count)) + # define channels : nombre d'observation d'ovni en fonction de l'année et du mois. Reorder sert à aller de "jan" à "dec" en descendant et non l'inverse comme il apparait intialement (pour éviter de perturber le lecteur)
+  # geom_tile(color = "white", size = 0.8) + #, stat = "identity") + # add layers : il y a trois variables ici (2 catégorielles et une continue). Possibilité d'utiliser "geom_tile" ou "geom_raster". Augmentation un peu de l'espace entre les cases pour plus de démarcation
+  geom_raster(mapping = aes(fill = count), hjust = 0.5, vjust = 0.5, ) +
+  labs(title = "E.T. visits the USA more often and especially in summer", # titre "accrocheur" mais également donnant directement l'interprétation principale : augmentation du nombre d'observations et une prédominence en été (Juin, Juillet, Août) 
+       subtitle = "Reported UFO sightings in the USA : 1990 - 2013", # titre descriptif du graphique (et données utilisées)
+       caption = "Source : NUFORC | Vizualisation : Axel Marivain (based on Brian P. Dranka's work)", # source et author indispensable
+       x = "", # possibilité d'afficher l'intitulé de la variable "year", mais inutile car alourdi le graphique sans apporter une aide (tout le monde comprend qu'il sagit des années ici)
+       y = "") + # idem pour le mois
+  theme(plot.title = element_text(face = "bold", colour = "black", size = 14),
+        plot.subtitle = element_text(size = 10),
+        legend.title = element_blank(), # inutile de mettre "count" ou "number of sightings" car c'est déjà écrit dans le sous titre descriptif --> ce serait de l'information en trop
+        legend.position = "bottom",
+        panel.grid = element_blank(),
+        panel.background = element_blank(),
+        axis.ticks = element_blank(), # supprime les petits tirets car inutiles à la compréhension du graphique
+        ) +
+  coord_equal() + # égalise la taille des rectangles (carrés désormais) pour plus de fluidité dans la lecture (la taille des case n'est pas un canal ici, seulement la position année/mois). Ne pas avoir la même taille aurait été perturbant car le lecteur essaierait de comprendre pouquoi un côté est plus long que l'autre
+  scale_fill_viridis(option = "D") # décorer --> garde le thème utilisé pour ma première idée pour faire plus "alien"
+
+ufo_plot # plot final
+
+
+
+##### BONUS : Représentation géographique animée - TEST (1ERE IDEE) #####
+
+
+# TEST DE REPRESENTATION GEOGRAPHIQUE DES "UFO SIGHTINGS" (AGRERES DE 1910 A 2013) AUX USA EN FONCTION DU MOIS
+usa_map <- map_data("state") # carte des USA
+
+ufo_map <- ggplot(usa_map, aes(long, lat)) + # x = longitude, y = latitude : channels
+  geom_polygon(fill = 'black', aes(x = long, y = lat, group = group), color = "midnightblue") + # cette étape permet de faire des groupes "états" et de les personnaliser
+  geom_point(ufo_tidy_test, alpha = 0.2, color = "green", shape = 20, mapping=aes(size = count, x=longitude, y=latitude)) + # determine les caractéristiques des points (taille couleur) et la taille qui correspond au nombre de fois qu'il a été vu des OVNI dans la ville 
+  labs(title = "E.T. prefer summer holidays to visit USA", # vous pouvez remarquer que je me suis inspiré de ce titre pour le graphique précédent
+       subtitle = "UFO Sightings in USA : 1910 - 2013", 
+       caption = "Source : NUFORC / Graphic : @axelmarivain",
+       x = "",
+       y = "") +
+  theme(plot.title = element_text(face = "bold", colour = "black", size = 15), legend.position = 'none', panel.grid = element_blank(),
+        panel.background = element_blank(),
+        axis.ticks = element_blank(),axis.text.x = element_blank(),
+        axis.text.y = element_blank())
+
+
+# IDEE DE METTRE EN PLUS UN GRAPHIQUE A COTE DE LA CARTE MONTRANT LE NOMBRE D' "UFO SIGHTINGS" DU MOIS CORRESPONDANT A L'IMAGE GIF
+ufo_count_month <- ggplot(ufo_tidy_test, aes(x = factor(month))) + 
+  geom_bar(stat = "count", width = 0.8, fill = "green") + # constate qu'au total, il y a plus d'observations d'ovni en été. J'avais également pour idée de représenter le total d'observations par mois et par continent (5 graphiques) et représenter la zone correspondant à l'été de chaque continent (car l'été n'intevient pas au même moment dans l'année) --> ça permet de souligner l'importance de l'été dans le nombre d'observations d'ovni (ciel plus dégagé, ennui ?...)
+  theme_classic() 
+
+
+# ANIMATION DE LA CARTE PAR MOIS + LE GRAPHIQUE POUR AVOIR UNE IDEE DU TOTAL TOUTES ANNEES CONFONDUES
+ufo_map_animate <- grid.arrange((ufo_map + transition_states(month)), (ufo_count_month + transition_states(month)), ncol = 2, nrow = 1)
+  # problème pour représenter une carte des "ufo sightings" par mois (toutes périodes confondues)
+  
+
