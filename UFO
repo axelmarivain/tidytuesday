@@ -14,7 +14,7 @@ rm(list = ls())
 
   # ATTENTION : 
   # Les Parties 1 et 2 font partie du devoir
-  # La Partie 3 est une partie "test" qui correspondait à ma première idée (ne pas en tenir compte). Je l'ai laissé pour garder une trace de mes recherches
+  # Les Parties 3 & 4 sont des parties "TEST" qui correspondaient à mes premières idées (ne pas en tenir compte). Je les ai laissé pour garder une trace de mes recherches
 
 
 
@@ -32,8 +32,10 @@ library(maptools)
 library(stringr)
 library(forecast)
 library(grid)
-library(viridis)
-
+library(viridis) # couleurs
+library(gridExtra)
+library(cowplot)
+library(patchwork) # mise en forme de plusieurs graphiques
 
 
 ##### Importation des données #####
@@ -53,7 +55,7 @@ summary(ufo_sightings)
 ufo_sightings <- ufo_sightings %>% 
   mutate(
     date_time = date_time %>% as_datetime(format = "%m/%d/%Y %H:%M"), # transformation de la variable "date" en format "date et heure"
-    month = date_time %>% month(label = TRUE) %>% as.factor(), # création d'une variable "mois"
+    month = date_time %>% month(label = TRUE, abbr = FALSE) %>% as.factor(), # création d'une variable "mois"
     year = date_time %>% year() %>% as.factor(), # création d'une variable "année"
     day = date_time %>% day() %>% as.factor(), # création d'une variable "jour"
     week = date_time %>% week() %>% as.factor(), # création d'une variable "semaine"
@@ -64,69 +66,250 @@ ufo_sightings <- ufo_sightings %>%
     country = country %>% as.factor(), # transformation de la variable "pays" en facteur
     ufo_shape = ufo_shape %>% as.factor(), # transformation de la variable "forme de l'OVNI" en facteur
   )
-levels(ufo_sightings$month) <- c("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec") # transformation des mois en Anglais (pour garder une cohérence sur le graphique). Méthode "à la main" car Sys.setlocale() ne fonctionne pas sur mon mac
 summary(ufo_sightings)
-  
-  
+
+
   # sélection des observations pour la Partie 2 (graphique)
 ufo_us <- ufo_sightings %>% 
-  filter(country == 'us', !(year %in% c("2014"))) # on ne garde que le pays "Etats-Unis" et on supprime l'année 2014 qui n'est pas finie et qui altère le graphique. Les données s'arrêtent au 8 mai 2014 : le mois de mai semble atypique sur le graphique d'origine alors qu'il manque simplement les données pour le moi entier. Nous aurions également pu supprimer seulement le moi de mai 2014, mais par soucis de visualisation et de tendance à la hausse qui perturberait l'analyse je préfère supprimer directement l'année entière 
+  filter(country == 'us', !(year %in% c("2014"))) # on ne garde que le pays "Etats-Unis" et on supprime l'année 2014 qui n'est pas finie et qui altère le graphique. Les données s'arrêtent au 8 mai 2014 : le mois de mai semble atypique sur le graphique d'origine alors qu'il manque simplement les données pour le moi entier. Nous aurions également pu supprimer seulement le moi de mai 2014, mais par soucis de visualisation et de tendance qui perturberait l'analyse je préfère supprimer directement l'année entière 
 
 
-  # sélection des observations utiles à la représentation géographique animée (TEST)
-ufo_us_geo <- ufo_sightings %>% 
-  filter(country == 'us', !(state %in% c('pr','ak','hi')), !(year %in% c("2014"))) # on ne garde que le pays "Etats-Unis" et on supprime les états "Puerto Rico", "Alaska" et "Hawaï" pour effectuer une représentation géographique. On supprime également l'année 2014 comme dans le cas précédent.
-
-
-  # tidy data
-ufo_tidy <- ufo_us %>%
+  # tidy data par mois et par année
+ufo_tidy_month <- ufo_us %>%
   mutate(year = as.integer(as.character(year))) %>% # on transforme la variable "année" pour pouvoir ensuite filter
-  filter(year >= 1990) %>% # on ne prend que les années supérieures à 1990 car avant 1990, l'évolution du nombre d'observation est minime comparativement à l'évolution à partir de 1995, ce qui ecraserait l'évolution entre 1910 et 1990. Ce serait de l'information en trop (et qui prendrait les 3/4 du grapgique inutilement) car on comprend instinctivement qu'avant les années 1990, il n'y avait pas beaucoup d'observations.  
-  group_by(year, month) %>% # on regroupe par année et mois pour avoir en ligne les "canaux" x et y
-  summarise(count=n()) # ces transformations permettent également de créer une variable de comptage : le comptage revient à ma première idée de traiter les données car je pense que la méthode de comptage avec ces types de données permet des représentations intuitives
+  filter(year >= 1960) %>% # on ne prend que les années supérieures à 1960 car avant 1960, le nombre d'observation est minime comparativement à l'après 1960, ce qui n'est pas très exploitable.
+  group_by(year, month) %>% # on regroupe par année et mois pour avoir en ligne les x et y
+  summarise(count_month=n()) # ces transformations permettent également de créer une variable de comptage : le comptage revient à ma première idée de traiter les données car je pense que la méthode de comptage avec ces types de données permet des représentations intuitives
 
 
-  # tidy data pour la partie 3 (TEST)
+  # éviter les "trous" dans le graphiques (car pas d'observations d'ovni)
+  # nous voulons éviter ces "trous" sinon l'oeil est malheureusement porté directement sur ces "trous" alors que c'est n'est pas le but du graphique
+  # on recode les "trous" tout simplement par des 0 --> car 0 observation dans ce mois. (Retour sur le choix des années : beaucoup trop de "0" avant 1960)
+lignes <- data.frame(matrix(as.integer(0),9,3))
+names(lignes) <- names(ufo_tidy_month)
+lignes$year <- c(as.integer(1960), # correspond aux années où il y a des "trous"
+                 as.integer(1961), 
+                 as.integer(1962), 
+                 as.integer(1963), 
+                 as.integer(1963), 
+                 as.integer(1964), 
+                 as.integer(1964), 
+                 as.integer(1967), 
+                 as.integer(1982))
+lignes$month <- c("décembre", # correspond aux mois où il y a des "trous"
+                  "mars",
+                  "avril",
+                  "septembre",
+                  "novembre",
+                  "février",
+                  "décembre",
+                  "janvier",
+                  "mars")
+
+ufo_tidy_month <- bind_rows(ufo_tidy_month, lignes) # concaténation des 2 tables --> ajoute les lignes à la table de base
+
+
+  # tidy data par année
+  # même processus que précédemment
+  # cette table permettra de calculer les proportions. il existe sûrement une méthdoe plus directe, mais je l'ai pensé comme ça
+ufo_tidy_year <- ufo_us %>%
+  mutate(year = as.integer(as.character(year))) %>% # on transforme la variable "année" pour pouvoir ensuite filter
+  filter(year >= 1960) %>%
+  group_by(year) %>%
+  summarise(count_year=n())
+
+
+  # on réunit les deux tables : proportion d'observation d'OVNI par rapport au mois sur une année
+ufo_tidy <- merge(ufo_tidy_month, ufo_tidy_year, by ="year")
+ufo_tidy$proportion <- 100*ufo_tidy$count_month/ufo_tidy$count_year # en pourcentage --> plus facile pour la compréhension du grand public (ex : 0.1 ou 10% --> les non initiés préfèrent utiliser 10%)
+ufo_tidy$month <- as.factor(ufo_tidy$month)
+
+  
+
+
+
+##### Partie 2 - Représentation graphique #####
+
+
+  # l'objectif est de reprendre la forme du graphique de Brian P. Dranka critiquée initialement en utilisant mes choix de données et de représentation 
+  # lors de mon travail j'ai pu également découvrir que Brian P. Dranka s'est lui même inspiré, pour la forme de ses graphiques, de James Curley : https://gist.github.com/jalapic/9a1c069aa8cee4089c1e (+ utilisation du package viridis pour ce type de graphique)
+ufo_plot <- ufo_tidy %>%
+  mutate(month = fct_relevel(month, 
+                             "janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre")) %>% 
+  ggplot(mapping = aes(x = year, y = reorder(month, desc(month)), #  Reorder sert à aller de "jan" à "dec" en descendant et non l'inverse comme il apparait intialement (pour éviter de perturber le lecteur).
+                   fill = proportion)) + # define channels : proportion d'observation d'ovni en fonction de l'année et du mois.
+  geom_tile(color = "white", size = 0.1) + # add layers : il y a trois variables ici (2 catégorielles et une continue). Augmentation de l'espace entre les cases pour plus de démarcation (size = 0.1). Pas trop pour ne pas prendre trop de place sur le graphique : l'oeil ne doit pas s'attarder sur ce détail (ça doit passer inaperçu tout en rendant le graphique agréable). ex : avec size = 0.5, cela perturbe la lecture
+  #geom_raster(hjust = 0.5, vjust = 0.5, ) + # possibilité d'utiliser geom_raster à la place de geom_tile
+  labs(title = "Avant les années 2000, E.T. préferait visiter les États-Unis en été", # titre "accrocheur" mais également donnant directement l'interprétation principale : prédominence des observations en été (Juin, Juillet, Août) jusqu'à la fin des années 1990 (avant l'avenement d'internet) 
+       subtitle = "Proportion des déclarations d'OVNI enregistrés par mois aux États-Unis de 1960 à 2013 \n\n\n\n\n\n\n\n\n\n\n\n\n\n\n", # titre descriptif du graphique (et données utilisées)
+       caption = "Source : NUFORC | Visualisation : Axel Marivain & Rémi Verronneau", # source et auteurs indispensable au graphique
+       x = "\n\n", # possibilité d'afficher l'intitulé de la variable "year", mais inutile car alourdi le graphique sans apporter une aide (tout le monde comprend qu'il sagit des années ici). + on passe 2 lignes pour ne pas trop coller les titres au graphique.
+       y = "",  # idem pour le mois
+       fill = '%') + # on affiche "%" pour rappeler que ce sont des pourcentages sur une année, et non un simple comptage.
+  theme(plot.title = element_text(face = "bold", colour = "black", size = 14), # mettre en gras pour bien différencier le titre
+        plot.subtitle = element_text(size = 10),
+        plot.caption = element_text(face = "italic", vjust = -10, size = 8), # minimiser les sources et l'auteur car initialement quasiement à la même taille que les sous-titre (pas bon)
+        legend.title = element_text(vjust = 0.75, color = "grey33", size = 10), # inutile de mettre "proportion" (ou "number of sightings" dans le cas du graphique à critiquer) car c'est déjà écrit dans le sous titre descriptif --> ce serait de l'information en trop
+        legend.position = "bottom", # pas à côté car gaphique déjà très long...
+        legend.text =  element_text(color = "grey33", size = 7),
+        panel.grid = element_blank(),
+        panel.background = element_blank(), # supprime tous les élements inutiles
+        axis.ticks = element_blank(), # supprime les graduations des axes car inutiles à la compréhension du graphique
+  ) +
+  coord_equal() + # égalise la taille des rectangles (carrés désormais) pour plus de fluidité dans la lecture (la taille des case n'est pas un canal ici, seulement la position année/mois). Ne pas avoir la même taille aurait été perturbant car le lecteur essaierait de comprendre pouquoi un côté est plus long que l'autre
+  scale_fill_gradientn(colours = c("black","midnightblue", "#238A8DFF", "green"), values = c(0,0.2,0.4,1)) # décorer --> garde le thème utilisé pour ma première idée pour rester dans l'ambiance "alien qui surgit dans la nuit"
+  #scale_fill_viridis_c(option = "D") # ou utilisation du theme viridis...
+
+ufo_plot
+
+
+
+
+
+## Tentative de superposer 2 graphiques : augmentation des déclarations d'OVNI + celui d'origine
+
+
+# Graphique du haut (1) :
+# X : années (1960-2013), Y : nombre de déclaration d'OVNI
+
+plot_count_year <- ggplot(ufo_tidy_year, aes(x=year, y=count_year)) +
+  geom_line(col = "green", size = 1) +
+  labs(x = "") + 
+  scale_x_continuous(expand = c(0,0)) +
+  theme(panel.grid.major.y = element_line(colour = "grey90"),
+        panel.grid.minor.y = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.background = element_blank(),
+        axis.title.y = element_blank(),
+        axis.ticks = element_blank(),
+        axis.text.x = element_blank(),
+        plot.margin = unit(c(0.1,0.2,0.1,0.2), "cm")
+  )
+
+plot_count_year
+
+
+# Graphique du bas (2) :
+# X : années (1960-2013), Y : mois
+
+ufo_plot_2 <- ufo_tidy %>%
+  mutate(month = fct_relevel(month, 
+                             "janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre")) %>% 
+  ggplot(mapping = aes(x = year, y = reorder(month, desc(month)),
+                       fill = proportion)) +
+  geom_tile(color = "white", size = 0.1) +
+  labs(fill = '%') +
+  theme(
+        legend.position = "bottom",
+        legend.text =  element_text(color = "grey33", size = 7),
+        legend.title = element_text(color = "grey33", size = 10, vjust = 0.75),
+        panel.grid = element_blank(),
+        panel.background = element_blank(),
+        axis.ticks = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        plot.margin = unit(c(0.1,0.2,1.5,0.2), "cm"),
+        legend.margin = unit(c(0.6,0.6,0.6,0.6), "cm")
+  ) + scale_x_continuous(expand = c(0,0)) +
+  coord_equal() + 
+  scale_fill_gradientn(colours = c("black","midnightblue", "#238A8DFF", "green"), values = c(0,0.2,0.4,1))
+
+ufo_plot_2
+
+
+
+
+# ggdraw() +
+#   draw_plot(plot_count_year, x = 0.1, y = 0.6, width = 0.8, height = 0.4) +
+#   draw_plot(ufo_plot_2, x = 0, y = 0, width = 1, height = 0.6)
+
+
+# utilisation du package "patchwork" pour reunir les 2 graphiques
+
+# patchwork <- (plot_count_year + ufo_plot_2) + plot_layout(heights = c(1, 2)) 
+# patchwork + plot_annotation(title = "Avant les années 2000, E.T. préferait visiter les États-Unis en été", 
+#                             subtitle = "1 : Nombre de déclarations d'OVNI aux États-Unis de 1960 à 2013\n2 : Proportions des déclarations d'OVNI par mois aux États-Unis de 1960 à 2013 \n\n\n",
+#                             caption = "Source : NUFORC | Visualisation : Axel Marivain & Rémi Verronneau",
+#                             tag_levels = '1') &
+#   theme(plot.tag = element_text(size = 10), 
+#         plot.caption = element_text(face = "italic", size = 8),
+#         plot.title = element_text(face = "bold", colour = "black", size = 14), # mettre en gras pour bien différencier le titre
+#         plot.subtitle = element_text(size = 10),
+#         )
+
+
+
+ufo_plot_final <- ufo_plot_2 + inset_element(plot_count_year, left = -0.043, bottom = 1, right = 1.008, top = 2) + 
+  plot_annotation(title = "Avant les années 2000, E.T. préferait visiter les États-Unis en été\n\n", 
+                  subtitle = "   1 : Nombre de déclarations d'OVNI aux États-Unis de 1960 à 2013\n\n   2 : Proportion des déclarations d'OVNI par mois aux États-Unis de 1960 à 2013\n        Note de lecture : en 1960, aux États-Unis, 35% des OVNI déclarés ont été observés au mois de Juin.\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+                  caption = "\n\nSource : NUFORC | Visualisation : Axel Marivain & Rémi Verronneau"
+                  ) &
+  theme(
+        plot.caption = element_text(face = "italic", size = 8),
+        plot.title = element_text(face = "bold", colour = "black", size = 14), # mettre en gras pour bien différencier le titre
+        plot.subtitle = element_text(size = 12),
+  )
+
+ufo_plot_final # plot final présent dans le rapport.
+### ATTENTION : problème d'affichage dans RStudio. Il faut sortir le graphique en PDF pour qu'il apparaisse comme dans le rapport ###
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+########## À partir d'ici, ce sont mes premières idées et tests : ne pas lancer le script car il peut y avoir des problèmes ##############
+
+
+
+
+
+
+
+
+##### Partie 3 TEST : Représentation géographique animée - TEST (1ERE ET MAUVAISE IDEE) #####
+
+
+# tidy data pour la partie 3 (TEST)
 ufo_tidy_test <- ufo_us_geo %>% 
   group_by(month, longitude, latitude) %>%  # ici je voulais compter le nombre d'observation d'ovni dans une ville (même longitude et latitude) pour chaque mois
   summarise(count=n()) # variable de comptage des observations d'ovni
 
 
-
-##### Partie 3 - Représentation graphique #####
-
-
-  # l'objectif est de reprendre la forme du graphique de Brian P. Dranka critiquée initialement en utilisant mes choix de données et de représentation 
-  # lors de mon travail j'ai pu également découvrir que Brian P. Dranka s'est lui même inspiré, pour la forme de ses graphiques, à James Curley : https://gist.github.com/jalapic/9a1c069aa8cee4089c1e (utilisation du package viridis pour ce type de graphique)
-ufo_plot <- ggplot(data = ufo_tidy, 
-                   mapping = aes(x = year, y = reorder(month, desc(month)), 
-                   fill = count)) + # define channels : nombre d'observation d'ovni en fonction de l'année et du mois. Reorder sert à aller de "jan" à "dec" en descendant et non l'inverse comme il apparait intialement (pour éviter de perturber le lecteur)
-  # geom_tile(color = "white", size = 0.8) + #, stat = "identity") + # add layers : il y a trois variables ici (2 catégorielles et une continue). Possibilité d'utiliser "geom_tile" ou "geom_raster". Augmentation un peu de l'espace entre les cases pour plus de démarcation
-  geom_raster(mapping = aes(fill = count), hjust = 0.5, vjust = 0.5, ) +
-  labs(title = "E.T. visits the USA more often and especially in summer", # titre "accrocheur" mais également donnant directement l'interprétation principale : augmentation du nombre d'observations et une prédominence en été (Juin, Juillet, Août) 
-       subtitle = "Reported UFO sightings in the USA : 1990 - 2013", # titre descriptif du graphique (et données utilisées)
-       caption = "Source : NUFORC | Vizualisation : Axel Marivain (based on Brian P. Dranka's work)", # source et author indispensable
-       x = "", # possibilité d'afficher l'intitulé de la variable "year", mais inutile car alourdi le graphique sans apporter une aide (tout le monde comprend qu'il sagit des années ici)
-       y = "") + # idem pour le mois
-  theme(plot.title = element_text(face = "bold", colour = "black", size = 14),
-        plot.subtitle = element_text(size = 10),
-        legend.title = element_blank(), # inutile de mettre "count" ou "number of sightings" car c'est déjà écrit dans le sous titre descriptif --> ce serait de l'information en trop
-        legend.position = "bottom",
-        panel.grid = element_blank(),
-        panel.background = element_blank(),
-        axis.ticks = element_blank(), # supprime les petits tirets car inutiles à la compréhension du graphique
-        ) +
-  coord_equal() + # égalise la taille des rectangles (carrés désormais) pour plus de fluidité dans la lecture (la taille des case n'est pas un canal ici, seulement la position année/mois). Ne pas avoir la même taille aurait été perturbant car le lecteur essaierait de comprendre pouquoi un côté est plus long que l'autre
-  scale_fill_viridis(option = "D") # décorer --> garde le thème utilisé pour ma première idée pour faire plus "alien"
-
-ufo_plot # plot final
+# sélection des observations utiles à la représentation géographique animée (TEST)
+ufo_us_geo <- ufo_sightings %>% 
+  filter(country == 'us', !(state %in% c('pr','ak','hi')), !(year %in% c("2014"))) # on ne garde que le pays "Etats-Unis" et on supprime les états "Puerto Rico", "Alaska" et "Hawaï" pour effectuer une représentation géographique. On supprime également l'année 2014 comme dans le cas précédent.
 
 
-
-##### BONUS : Représentation géographique animée - TEST (1ERE IDEE) #####
-
-
-# TEST DE REPRESENTATION GEOGRAPHIQUE DES "UFO SIGHTINGS" (AGRERES DE 1910 A 2013) AUX USA EN FONCTION DU MOIS
+# TEST DE REPRESENTATION GEOGRAPHIQUE DES "UFO SIGHTINGS" (AGRERES DE 1910 A 2013) AUX USA EN FONCTION DU MOIS    (tentative effectuée avant le TP sur la cartographie, donc peut ne pas correspondre aux méthodes vues dans le TP, mais de recherches internet)
 usa_map <- map_data("state") # carte des USA
 
 ufo_map <- ggplot(usa_map, aes(long, lat)) + # x = longitude, y = latitude : channels
@@ -152,5 +335,96 @@ ufo_count_month <- ggplot(ufo_tidy_test, aes(x = factor(month))) +
 # ANIMATION DE LA CARTE PAR MOIS + LE GRAPHIQUE POUR AVOIR UNE IDEE DU TOTAL TOUTES ANNEES CONFONDUES
 ufo_map_animate <- grid.arrange((ufo_map + transition_states(month)), (ufo_count_month + transition_states(month)), ncol = 2, nrow = 1)
   # problème pour représenter une carte des "ufo sightings" par mois (toutes périodes confondues)
-  
+  # --> MAUVAISE IDEE...
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+##### Partie 4 TEST : Autre représentation graphique des données (AUTRE IDEE) #####
+
+
+# par saison (TEST)
+
+# ufo_sightings$season <- " "
+
+for (i in 1:dim(ufo_sightings)[1]) {
+  
+  if (month(ufo_sightings$date_time[i]) == 3 & day((ufo_sightings$date_time[i])) >= 20){
+    ufo_sightings$season[i] <- "spring"
+  } else if (month(ufo_sightings$date_time[i]) == 4) {
+    ufo_sightings$season[i] <- "spring"
+  } else if (month(ufo_sightings$date_time[i]) == 5) {
+    ufo_sightings$season[i] <- "spring"
+  } else if (month(ufo_sightings$date_time[i]) == 6 & day(ufo_sightings$date_time[i]) < 20) {
+    ufo_sightings$season[i] <- "spring"
+  } else if (month(ufo_sightings$date_time[i]) == 6 & day(ufo_sightings$date_time[i]) >= 20) {
+    ufo_sightings$season[i] <- "summer"
+  } else if (month(ufo_sightings$date_time[i]) == 7) {
+    ufo_sightings$season[i] <- "summer"
+  } else if (month(ufo_sightings$date_time[i]) == 8) {
+    ufo_sightings$season[i] <- "summer"
+  } else if (month(ufo_sightings$date_time[i]) == 9 & day(ufo_sightings$date_time[i]) < 20) {
+    ufo_sightings$season[i] <- "summer"
+  } else if (month(ufo_sightings$date_time[i]) == 9 & day(ufo_sightings$date_time[i]) >= 20) {
+    ufo_sightings$season[i] <- "autumn"
+  } else if (month(ufo_sightings$date_time[i]) == 10) {
+    ufo_sightings$season[i] <- "autumn"
+  } else if (month(ufo_sightings$date_time[i]) == 11) {
+    ufo_sightings$season[i] <- "autumn"
+  } else if (month(ufo_sightings$date_time[i]) == 12 & day(ufo_sightings$date_time[i]) < 21) {
+    ufo_sightings$season[i] <- "autumn"
+  } else if (month(ufo_sightings$date_time[i]) == 12 & day(ufo_sightings$date_time[i]) >= 21) {
+    ufo_sightings$season[i] <- "winter"
+  } else if (month(ufo_sightings$date_time[i]) == 1) {
+    ufo_sightings$season[i] <- "winter"
+  } else if (month(ufo_sightings$date_time[i]) == 2) {
+    ufo_sightings$season[i] <- "winter"
+  } else if (month(ufo_sightings$date_time[i]) == 3 & day(ufo_sightings$date_time[i]) < 20) {
+    ufo_sightings$season[i] <- "winter"
+  }
+}
+
+
+# TEST tidy data par saisons
+ufo_tidy_2 <- ufo_us %>%
+  mutate(year = as.integer(as.character(year))) %>% # on transforme la variable "année" pour pouvoir ensuite filter
+  #filter(year >= 1960) %>%
+  group_by(year, season) %>% # on regroupe par année et mois pour avoir en ligne les "canaux" x et y
+  summarise(count_season=n()) # ces transformations permettent également de créer une variable de comptage : le comptage revient à ma première idée de traiter les données car je pense que la méthode de comptage avec ces types de données permet des représentations intuitives
+
+ufo_tidy_2 <- ufo_tidy_2 %>%
+  pivot_wider(names_from = season, values_from = count_season)
+
+# abandon de l'idée
+ufo_plot_2 <- ggplot(data = ufo_tidy_2, 
+                   mapping = aes(x = year, y = reorder(month, desc(month)), 
+                                 fill = count_season)) + # define channels : nombre d'observation d'ovni en fonction de l'année et du mois. Reorder sert à aller de "jan" à "dec" en descendant et non l'inverse comme il apparait intialement (pour éviter de perturber le lecteur)
+  # geom_tile(color = "white", size = 0.8) + #, stat = "identity") + # add layers : il y a trois variables ici (2 catégorielles et une continue). Possibilité d'utiliser "geom_tile" ou "geom_raster". Augmentation un peu de l'espace entre les cases pour plus de démarcation
+  geom_raster(mapping = aes(fill = count_month), hjust = 0.5, vjust = 0.5, ) +
+  labs(title = "E.T. visits the USA more often and especially in summer", # titre "accrocheur" mais également donnant directement l'interprétation principale : augmentation du nombre d'observations et une prédominence en été (Juin, Juillet, Août) 
+       subtitle = "Reported UFO sightings in the USA : 1990 - 2013", # titre descriptif du graphique (et données utilisées)
+       caption = "Source : NUFORC | Vizualisation : Axel Marivain (based on Brian P. Dranka's work)", # source et author indispensable
+       x = "", # possibilité d'afficher l'intitulé de la variable "year", mais inutile car alourdi le graphique sans apporter une aide (tout le monde comprend qu'il sagit des années ici)
+       y = "") + # idem pour le mois
+  theme(plot.title = element_text(face = "bold", colour = "black", size = 14),
+        plot.subtitle = element_text(size = 10),
+        legend.title = element_blank(), # inutile de mettre "count" ou "number of sightings" car c'est déjà écrit dans le sous titre descriptif --> ce serait de l'information en trop
+        legend.position = "bottom",
+        panel.grid = element_blank(),
+        panel.background = element_blank(),
+        axis.ticks = element_blank(), # supprime les petits tirets car inutiles à la compréhension du graphique
+  ) +
+  coord_equal() + # égalise la taille des rectangles (carrés désormais) pour plus de fluidité dans la lecture (la taille des case n'est pas un canal ici, seulement la position année/mois). Ne pas avoir la même taille aurait été perturbant car le lecteur essaierait de comprendre pouquoi un côté est plus long que l'autre
+  scale_fill_viridis(option = "D") # décorer --> garde le thème utilisé pour ma première idée pour faire plus "alien"
+
+ufo_plot_2
